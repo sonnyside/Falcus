@@ -422,6 +422,27 @@ export default function Home() {
     }));
   }
 
+  async function saveWidgetData(payload: {
+  title: string;
+  area: string;
+  micro: string;
+  streak: number;
+  done: boolean;
+  updatedAt: string;
+}) {
+  try {
+    await fetch("/api/widget/save", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    console.error("Kunne ikke gemme widget-data", error);
+  }
+}
+
   const firstArea = selected[0] ?? null;
   const extraAreas = selected.slice(1);
   const hasStartedToday = lastStartedDate === getToday();
@@ -444,6 +465,43 @@ export default function Home() {
     sortedOtherSelected.length - shownOtherSelected.length,
     0
   );
+
+  const nextOpenArea = useMemo(() => {
+    if (selected.length === 0) return null;
+
+    const openAreas = selected.filter((area) => !details[area]?.done);
+    if (openAreas.length === 0) return null;
+
+    if (focusedArea && !details[focusedArea]?.done) return focusedArea;
+
+    return openAreas[0];
+  }, [selected, details, focusedArea]);
+
+  useEffect(() => {
+  if (!hasHydrated || !hasStartedToday) return;
+
+  const widgetArea = nextOpenArea ?? focusedArea;
+
+  if (!widgetArea) return;
+
+  const payload = {
+    title: nextOpenArea ? "Næste mikro" : "Dagen i dag",
+    area: areaLabels[widgetArea],
+    micro: details[widgetArea]?.micro || "",
+    streak,
+    done: details[widgetArea]?.done ?? false,
+    updatedAt: new Date().toISOString(),
+  };
+
+  saveWidgetData(payload);
+}, [
+  hasHydrated,
+  hasStartedToday,
+  nextOpenArea,
+  focusedArea,
+  details,
+  streak,
+]);
 
   if (!hasHydrated) {
     return (
@@ -761,6 +819,8 @@ export default function Home() {
 
   if (step === "start" && focusedArea) {
     const focusDone = details[focusedArea]?.done;
+    const cardArea = nextOpenArea ?? focusedArea;
+    const everythingDone = selected.length > 0 && !nextOpenArea;
 
     return (
       <main className="min-h-screen bg-teal-950 p-6 text-white">
@@ -787,28 +847,38 @@ export default function Home() {
 
           <div
             className={`rounded-3xl border border-white/15 bg-white/10 p-5 ${
-              focusDone ? "opacity-70" : ""
+              everythingDone ? "opacity-75" : ""
             }`}
           >
             <p className="mb-2 text-sm uppercase tracking-wide text-white/55">
-              Dagens kort
+              {everythingDone ? "Dagen i dag" : "Næste mikro"}
             </p>
 
-            <p className="mb-2 text-sm font-semibold text-white/75">
-              {areaLabels[focusedArea]}
-            </p>
+            {!everythingDone && cardArea ? (
+              <>
+                <p className="mb-2 text-sm font-semibold text-white/75">
+                  {areaLabels[cardArea]}
+                </p>
 
-            <p
-              className={`text-2xl font-semibold leading-snug text-white ${
-                focusDone ? "line-through" : ""
-              }`}
-            >
-              {details[focusedArea]?.micro || "—"}
-            </p>
+                <p className="text-2xl font-semibold leading-snug text-white">
+                  {details[cardArea]?.micro || "—"}
+                </p>
 
-            <p className="mt-4 text-sm text-white/55">
-              Opgave: {details[focusedArea]?.task || "—"}
-            </p>
+                <p className="mt-4 text-sm text-white/55">
+                  Opgave: {details[cardArea]?.task || "—"}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-2xl font-semibold leading-snug text-white">
+                  Alt det valgte er klaret.
+                </p>
+
+                <p className="mt-4 text-sm text-white/55">
+                  Du har lukket dagens små løkker.
+                </p>
+              </>
+            )}
           </div>
 
           {shownOtherSelected.length > 0 && (
@@ -832,7 +902,11 @@ export default function Home() {
                         {areaLabels[area]}
                       </span>
                       <span className="text-white/55"> → </span>
-                      <span className={isDone ? "line-through text-white/65" : "text-white/75"}>
+                      <span
+                        className={
+                          isDone ? "line-through text-white/65" : "text-white/75"
+                        }
+                      >
                         {details[area]?.micro || "—"}
                       </span>
                       {isDone ? <span className="ml-2 text-white/45">✓</span> : null}
@@ -850,8 +924,10 @@ export default function Home() {
           )}
 
           <p className="mt-4 text-sm text-white/65">
-            {focusDone
-              ? "Den er markeret som gjort."
+            {everythingDone
+              ? "Du er faktisk done i dag."
+              : focusDone
+              ? "Fokus er taget. Næste åbne mikro er vist ovenfor."
               : "Begynd bare med mikrohandlingen."}
           </p>
 
@@ -864,7 +940,7 @@ export default function Home() {
             </button>
           )}
 
-          {hasStartedToday && (
+          {hasStartedToday && focusedArea && (
             <button
               onClick={() => toggleDone(focusedArea)}
               className="mt-7 w-full rounded-full bg-orange-400 px-5 py-4 text-base font-semibold text-black"
