@@ -100,6 +100,7 @@ type Step =
 type AreaDetails = {
   task: string;
   micro: string;
+  done: boolean;
 };
 
 type DayState = {
@@ -121,11 +122,11 @@ const PROGRESS_STORAGE_KEY = "falcus-progress";
 
 function createEmptyDetails(): Record<Area, AreaDetails> {
   return {
-    DIG: { task: "", micro: "" },
-    HJEM: { task: "", micro: "" },
-    FAMILIE: { task: "", micro: "" },
-    ARBEJDE: { task: "", micro: "" },
-    ØKONOMI: { task: "", micro: "" },
+    DIG: { task: "", micro: "", done: false },
+    HJEM: { task: "", micro: "", done: false },
+    FAMILIE: { task: "", micro: "", done: false },
+    ARBEJDE: { task: "", micro: "", done: false },
+    ØKONOMI: { task: "", micro: "", done: false },
   };
 }
 
@@ -377,7 +378,13 @@ export default function Home() {
     const currentIndex = taskSuggestionIndex[area] ?? 0;
     const suggestion = options[currentIndex];
 
-    updateDetail(area, "task", suggestion);
+    setDetails((prev) => ({
+      ...prev,
+      [area]: {
+        ...prev[area],
+        task: suggestion,
+      },
+    }));
 
     setTaskSuggestionIndex((prev) => ({
       ...prev,
@@ -390,11 +397,28 @@ export default function Home() {
     const currentIndex = microSuggestionIndex[area] ?? 0;
     const suggestion = options[currentIndex];
 
-    updateDetail(area, "micro", suggestion);
+    setDetails((prev) => ({
+      ...prev,
+      [area]: {
+        ...prev[area],
+        micro: suggestion,
+        done: false,
+      },
+    }));
 
     setMicroSuggestionIndex((prev) => ({
       ...prev,
       [area]: (currentIndex + 1) % options.length,
+    }));
+  }
+
+  function toggleDone(area: Area) {
+    setDetails((prev) => ({
+      ...prev,
+      [area]: {
+        ...prev[area],
+        done: !prev[area].done,
+      },
     }));
   }
 
@@ -407,9 +431,17 @@ export default function Home() {
     return selected.filter((area) => area !== focusedArea);
   }, [selected, focusedArea]);
 
-  const shownOtherSelected = otherSelected.slice(0, 2);
+  const sortedOtherSelected = useMemo(() => {
+    return [...otherSelected].sort((a, b) => {
+      const aDone = details[a]?.done ? 1 : 0;
+      const bDone = details[b]?.done ? 1 : 0;
+      return aDone - bDone;
+    });
+  }, [otherSelected, details]);
+
+  const shownOtherSelected = sortedOtherSelected.slice(0, 2);
   const hiddenOtherCount = Math.max(
-    otherSelected.length - shownOtherSelected.length,
+    sortedOtherSelected.length - shownOtherSelected.length,
     0
   );
 
@@ -671,6 +703,7 @@ export default function Home() {
           <div className="space-y-3">
             {selected.map((area) => {
               const isFocused = focusedArea === area;
+              const isDone = details[area]?.done;
 
               return (
                 <button
@@ -680,13 +713,19 @@ export default function Home() {
                     isFocused
                       ? "border-amber-200 bg-amber-300 text-black"
                       : "border-white/15 bg-white/10 text-white"
-                  }`}
+                  } ${isDone ? "opacity-60" : ""}`}
                 >
-                  <p className="font-semibold">{areaLabels[area]}</p>
+                  <p className="font-semibold">
+                    {areaLabels[area]} {isDone ? "✓" : ""}
+                  </p>
                   <p className="mt-1 text-sm opacity-80">
                     Opgave: {details[area]?.task || "—"}
                   </p>
-                  <p className="text-sm opacity-80">
+                  <p
+                    className={`text-sm opacity-80 ${
+                      isDone ? "line-through" : ""
+                    }`}
+                  >
                     Mikro: {details[area]?.micro || "—"}
                   </p>
                 </button>
@@ -721,6 +760,8 @@ export default function Home() {
   }
 
   if (step === "start" && focusedArea) {
+    const focusDone = details[focusedArea]?.done;
+
     return (
       <main className="min-h-screen bg-teal-950 p-6 text-white">
         <div className="mx-auto max-w-md">
@@ -744,7 +785,11 @@ export default function Home() {
             </p>
           )}
 
-          <div className="rounded-3xl border border-white/15 bg-white/10 p-5">
+          <div
+            className={`rounded-3xl border border-white/15 bg-white/10 p-5 ${
+              focusDone ? "opacity-70" : ""
+            }`}
+          >
             <p className="mb-2 text-sm uppercase tracking-wide text-white/55">
               Dagens kort
             </p>
@@ -753,7 +798,11 @@ export default function Home() {
               {areaLabels[focusedArea]}
             </p>
 
-            <p className="text-2xl font-semibold leading-snug text-white">
+            <p
+              className={`text-2xl font-semibold leading-snug text-white ${
+                focusDone ? "line-through" : ""
+              }`}
+            >
               {details[focusedArea]?.micro || "—"}
             </p>
 
@@ -769,20 +818,27 @@ export default function Home() {
               </p>
 
               <div className="space-y-2 text-sm">
-                {shownOtherSelected.map((area) => (
-                  <div
-                    key={area}
-                    className="border-b border-white/10 pb-2 last:border-b-0 last:pb-0"
-                  >
-                    <span className="font-semibold text-white/90">
-                      {areaLabels[area]}
-                    </span>
-                    <span className="text-white/55"> → </span>
-                    <span className="text-white/75">
-                      {details[area]?.micro || "—"}
-                    </span>
-                  </div>
-                ))}
+                {shownOtherSelected.map((area) => {
+                  const isDone = details[area]?.done;
+
+                  return (
+                    <div
+                      key={area}
+                      className={`border-b border-white/10 pb-2 last:border-b-0 last:pb-0 ${
+                        isDone ? "opacity-55" : ""
+                      }`}
+                    >
+                      <span className="font-semibold text-white/90">
+                        {areaLabels[area]}
+                      </span>
+                      <span className="text-white/55"> → </span>
+                      <span className={isDone ? "line-through text-white/65" : "text-white/75"}>
+                        {details[area]?.micro || "—"}
+                      </span>
+                      {isDone ? <span className="ml-2 text-white/45">✓</span> : null}
+                    </div>
+                  );
+                })}
               </div>
 
               {hiddenOtherCount > 0 && (
@@ -794,7 +850,9 @@ export default function Home() {
           )}
 
           <p className="mt-4 text-sm text-white/65">
-            Begynd bare med mikrohandlingen.
+            {focusDone
+              ? "Den er markeret som gjort."
+              : "Begynd bare med mikrohandlingen."}
           </p>
 
           {!hasStartedToday && (
@@ -803,6 +861,15 @@ export default function Home() {
               className="mt-7 w-full rounded-full bg-orange-400 px-5 py-4 text-base font-semibold text-black"
             >
               Jeg er i gang
+            </button>
+          )}
+
+          {hasStartedToday && (
+            <button
+              onClick={() => toggleDone(focusedArea)}
+              className="mt-7 w-full rounded-full bg-orange-400 px-5 py-4 text-base font-semibold text-black"
+            >
+              {focusDone ? "Marker som ikke gjort" : "Marker som gjort"}
             </button>
           )}
 
