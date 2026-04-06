@@ -423,34 +423,48 @@ export default function Home() {
   }
 
   async function saveWidgetData(payload: {
-  title: string;
-  area: string;
-  micro: string;
-  streak: number;
-  done: boolean;
-  updatedAt: string;
-}) {
-  try {
-    await fetch("/api/widget/save", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
-  } catch (error) {
-    console.error("Kunne ikke gemme widget-data", error);
+    title: string;
+    area: string;
+    micro: string;
+    streak: number;
+    done: boolean;
+    state: "open" | "done";
+    updatedAt: string;
+  }) {
+    try {
+      await fetch("/api/widget/save", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+    } catch (error) {
+      console.error("Kunne ikke gemme widget-data", error);
+    }
   }
-}
 
   const firstArea = selected[0] ?? null;
   const extraAreas = selected.slice(1);
   const hasStartedToday = lastStartedDate === getToday();
 
+  const nextOpenArea = useMemo(() => {
+    if (selected.length === 0) return null;
+
+    const openAreas = selected.filter((area) => !details[area]?.done);
+    if (openAreas.length === 0) return null;
+
+    if (focusedArea && !details[focusedArea]?.done) return focusedArea;
+
+    return openAreas[0];
+  }, [selected, details, focusedArea]);
+
+  const cardArea = nextOpenArea ?? focusedArea;
+
   const otherSelected = useMemo(() => {
-    if (focusedArea === null) return selected;
-    return selected.filter((area) => area !== focusedArea);
-  }, [selected, focusedArea]);
+    if (cardArea === null) return selected;
+    return selected.filter((area) => area !== cardArea);
+  }, [selected, cardArea]);
 
   const sortedOtherSelected = useMemo(() => {
     return [...otherSelected].sort((a, b) => {
@@ -466,42 +480,32 @@ export default function Home() {
     0
   );
 
-  const nextOpenArea = useMemo(() => {
-    if (selected.length === 0) return null;
-
-    const openAreas = selected.filter((area) => !details[area]?.done);
-    if (openAreas.length === 0) return null;
-
-    if (focusedArea && !details[focusedArea]?.done) return focusedArea;
-
-    return openAreas[0];
-  }, [selected, details, focusedArea]);
-
   useEffect(() => {
-  if (!hasHydrated || !hasStartedToday) return;
+    if (!hasHydrated || !hasStartedToday) return;
 
-  const widgetArea = nextOpenArea ?? focusedArea;
+    if (!nextOpenArea) {
+      saveWidgetData({
+        title: "I dag",
+        area: "",
+        micro: "Alt det valgte er klaret",
+        streak,
+        done: true,
+        state: "done",
+        updatedAt: new Date().toISOString(),
+      });
+      return;
+    }
 
-  if (!widgetArea) return;
-
-  const payload = {
-    title: nextOpenArea ? "Næste mikro" : "Dagen i dag",
-    area: areaLabels[widgetArea],
-    micro: details[widgetArea]?.micro || "",
-    streak,
-    done: details[widgetArea]?.done ?? false,
-    updatedAt: new Date().toISOString(),
-  };
-
-  saveWidgetData(payload);
-}, [
-  hasHydrated,
-  hasStartedToday,
-  nextOpenArea,
-  focusedArea,
-  details,
-  streak,
-]);
+    saveWidgetData({
+      title: "Næste mikro",
+      area: areaLabels[nextOpenArea],
+      micro: details[nextOpenArea]?.micro || "",
+      streak,
+      done: false,
+      state: "open",
+      updatedAt: new Date().toISOString(),
+    });
+  }, [hasHydrated, hasStartedToday, nextOpenArea, details, streak]);
 
   if (!hasHydrated) {
     return (
@@ -818,8 +822,7 @@ export default function Home() {
   }
 
   if (step === "start" && focusedArea) {
-    const focusDone = details[focusedArea]?.done;
-    const cardArea = nextOpenArea ?? focusedArea;
+    const focusDone = cardArea ? details[cardArea]?.done : false;
     const everythingDone = selected.length > 0 && !nextOpenArea;
 
     return (
@@ -940,9 +943,9 @@ export default function Home() {
             </button>
           )}
 
-          {hasStartedToday && focusedArea && (
+          {hasStartedToday && cardArea && !everythingDone && (
             <button
-              onClick={() => toggleDone(focusedArea)}
+              onClick={() => toggleDone(cardArea)}
               className="mt-7 w-full rounded-full bg-orange-400 px-5 py-4 text-base font-semibold text-black"
             >
               {focusDone ? "Marker som ikke gjort" : "Marker som gjort"}
