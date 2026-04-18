@@ -5,6 +5,29 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 const areas = ["DIG", "HJEM", "FAMILIE", "ARBEJDE", "ØKONOMI"] as const;
 type Area = (typeof areas)[number];
 
+type Step = "select" | "define" | "prioritize" | "start";
+
+type ActionItem = {
+  id: string;
+  area: Area;
+  task: string;
+  micro: string;
+  done: boolean;
+};
+
+type DayState = {
+  items: ActionItem[];
+  step: Step;
+  lastStartedDate: string | null;
+  dayKey: string | null;
+  taskSuggestionIndex: Record<Area, number>;
+  microSuggestionIndex: Record<Area, number>;
+};
+
+type ProgressState = {
+  streak: number;
+};
+
 const areaLabels: Record<Area, string> = {
   DIG: "Dig",
   HJEM: "Hjem",
@@ -22,7 +45,7 @@ const taskSuggestions: Record<Area, string[]> = {
     "Lande lidt",
   ],
   HJEM: [
-    "Få lidt styr på køkkenet",
+    "Få lidt styr på hjemmet",
     "Få noget ryddet væk",
     "Gøre hjemmet lidt lettere",
     "Tage toppen af rodet",
@@ -60,18 +83,19 @@ const microSuggestions: Record<Area, string[]> = {
     "Skift til rent tøj",
   ],
   HJEM: [
-    "Tag én tallerken med til opvaskeren",
-    "Tag affaldet med ud",
-    "Læg én ting på plads",
+    "Tøm lidt af opvaskeren",
+    "Tag én ren ting fra opvaskemaskinen",
+    "Sæt en vask over",
+    "Læg noget tøj sammen",
     "Tør bordet af",
-    "Sæt vand over",
+    "Tag affaldet med ud",
   ],
   FAMILIE: [
     "Send en kort besked",
     "Spørg lige hvordan det går",
     "Giv én hurtig opdatering",
     "Ring kort til én",
-    "Aftal én lille ting",
+    "Find på noget hyggeligt",
   ],
   ARBEJDE: [
     "Åbn den vigtigste mail",
@@ -85,50 +109,25 @@ const microSuggestions: Record<Area, string[]> = {
     "Tjek din konto",
     "Betal én regning",
     "Kig på én post",
-    "Flyt et lille beløb",
+    "Send mail",
   ],
-};
-
-type Step =
-  | "select"
-  | "defineFirst"
-  | "expand"
-  | "defineRest"
-  | "focus"
-  | "start";
-
-type AreaDetails = {
-  task: string;
-  micro: string;
-  done: boolean;
-};
-
-type DayState = {
-  selected: Area[];
-  details: Record<Area, AreaDetails>;
-  focusedArea: Area | null;
-  step: Step;
-  lastStartedDate: string | null;
-  taskSuggestionIndex: Record<Area, number>;
-  microSuggestionIndex: Record<Area, number>;
-};
-
-type ProgressState = {
-  streak: number;
 };
 
 const DAY_STORAGE_KEY = "falcus-day";
 const PROGRESS_STORAGE_KEY = "falcus-progress";
 
-function createEmptyDetails(): Record<Area, AreaDetails> {
-  return {
-    DIG: { task: "", micro: "", done: false },
-    HJEM: { task: "", micro: "", done: false },
-    FAMILIE: { task: "", micro: "", done: false },
-    ARBEJDE: { task: "", micro: "", done: false },
-    ØKONOMI: { task: "", micro: "", done: false },
-  };
-}
+const primaryButtonClass =
+  "w-full rounded-full bg-orange-400 px-5 py-4 text-base font-semibold text-black transition active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed";
+const secondaryButtonClass =
+  "w-full rounded-full border border-white/15 bg-white/5 px-5 py-4 text-base font-semibold text-white transition hover:bg-white/10";
+const shellClass = "mx-auto max-w-md";
+const cardClass =
+  "rounded-[28px] border border-white/12 bg-white/[0.07] backdrop-blur-sm shadow-sm";
+const mutedCardClass =
+  "rounded-[24px] border border-white/10 bg-white/[0.05] backdrop-blur-sm";
+const inputClass =
+  "w-full rounded-2xl border border-white/10 bg-white/8 p-3 text-white outline-none placeholder:text-white/35 focus:border-white/20 focus:bg-white/10";
+const labelClass = "text-xs uppercase tracking-[0.18em] text-white/40";
 
 function createSuggestionIndex(): Record<Area, number> {
   return {
@@ -148,6 +147,16 @@ function getToday(): string {
   return `${year}-${month}-${day}`;
 }
 
+function makeId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function progressDots(doneCount: number, totalCount: number) {
+  return Array.from({ length: totalCount }, (_, i) =>
+    i < doneCount ? "✓" : "○"
+  ).join(" ");
+}
+
 function ChipButton({
   children,
   onClick,
@@ -159,7 +168,7 @@ function ChipButton({
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-sm text-white/75 transition hover:bg-white/10 hover:text-white"
+      className="inline-flex items-center rounded-full border border-white/12 bg-white/6 px-3 py-1.5 text-sm text-white/75 transition hover:bg-white/10 hover:text-white"
     >
       {children}
     </button>
@@ -174,27 +183,88 @@ function TopStatus({
   streak: number;
 }) {
   return (
-    <div className="mb-4 text-xs uppercase tracking-wide text-white/45">
-      {text}
-      {streak > 0 && <span> • 🔥 {streak} dage</span>}
+    <div className="mb-4 flex items-center justify-between gap-3">
+      <div className="text-xs uppercase tracking-[0.18em] text-white/40">
+        {text}
+      </div>
+      {streak > 0 ? (
+        <div className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-xs text-white/70">
+          🔥 {streak}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AppShell({ children }: { children: ReactNode }) {
+  return (
+    <main className="min-h-screen bg-teal-950 text-white">
+      <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.08),_transparent_35%)] p-6">
+        <div className={shellClass}>{children}</div>
+      </div>
+    </main>
+  );
+}
+
+function SectionTitle({
+  eyebrow,
+  title,
+  subtitle,
+}: {
+  eyebrow: string;
+  title: string;
+  subtitle: string;
+}) {
+  return (
+    <div className="mb-5">
+      <p className={labelClass}>{eyebrow}</p>
+      <h1 className="mt-2 text-3xl font-bold tracking-tight">{title}</h1>
+      <p className="mt-2 text-sm text-white/65">{subtitle}</p>
+    </div>
+  );
+}
+
+function FalconHero({
+  state,
+}: {
+  state: "svaever" | "fokuserer" | "dykker" | "tilfreds";
+}) {
+  const srcMap = {
+    svaever: "/falcon-svaever.png",
+    fokuserer: "/falcon-fokuserer.png",
+    dykker: "/falcon-dykker.png",
+    tilfreds: "/falcon-tilfreds.png",
+  };
+
+  return (
+    <div className="mb-6 flex justify-center">
+      <img
+        src={srcMap[state]}
+        alt="Falcus falk"
+        className="w-full max-w-[280px] h-auto object-contain"
+      />
     </div>
   );
 }
 
 export default function Home() {
-  const [selected, setSelected] = useState<Area[]>([]);
+  const [items, setItems] = useState<ActionItem[]>([]);
   const [step, setStep] = useState<Step>("select");
-  const [details, setDetails] = useState<Record<Area, AreaDetails>>(
-    createEmptyDetails()
-  );
-  const [focusedArea, setFocusedArea] = useState<Area | null>(null);
-  const [streak, setStreak] = useState<number>(0);
+  const [streak, setStreak] = useState(0);
   const [lastStartedDate, setLastStartedDate] = useState<string | null>(null);
+  const [dayKey, setDayKey] = useState<string | null>(null);
   const [taskSuggestionIndex, setTaskSuggestionIndex] =
     useState<Record<Area, number>>(createSuggestionIndex());
   const [microSuggestionIndex, setMicroSuggestionIndex] =
     useState<Record<Area, number>>(createSuggestionIndex());
   const [hasHydrated, setHasHydrated] = useState(false);
+
+  function clearCurrentDayState() {
+    setItems([]);
+    setStep("select");
+    setLastStartedDate(null);
+    setDayKey(getToday());
+  }
 
   useEffect(() => {
     const today = getToday();
@@ -208,17 +278,17 @@ export default function Home() {
 
       const dayRaw = localStorage.getItem(DAY_STORAGE_KEY);
       if (!dayRaw) {
+        setDayKey(today);
         setHasHydrated(true);
         return;
       }
 
       const parsedDay: Partial<DayState> = JSON.parse(dayRaw);
 
-      const parsedSelected = (parsedDay.selected as Area[]) ?? [];
-      const parsedDetails = parsedDay.details ?? createEmptyDetails();
-      const parsedFocusedArea = (parsedDay.focusedArea as Area | null) ?? null;
+      const parsedItems = parsedDay.items ?? [];
       const parsedStep = parsedDay.step ?? "select";
       const parsedLastStartedDate = parsedDay.lastStartedDate ?? null;
+      const parsedDayKey = parsedDay.dayKey ?? null;
 
       setTaskSuggestionIndex(
         parsedDay.taskSuggestionIndex ?? createSuggestionIndex()
@@ -227,24 +297,20 @@ export default function Home() {
         parsedDay.microSuggestionIndex ?? createSuggestionIndex()
       );
 
-      const isSameDay = parsedLastStartedDate === today;
-      const hasFocusForToday = isSameDay && !!parsedFocusedArea;
-
-      if (isSameDay) {
-        setSelected(parsedSelected);
-        setDetails(parsedDetails);
-        setFocusedArea(parsedFocusedArea);
+      if (parsedDayKey === today) {
+        setItems(parsedItems);
         setLastStartedDate(parsedLastStartedDate);
-        setStep(hasFocusForToday ? "start" : parsedStep);
+        setDayKey(parsedDayKey);
+        setStep(parsedItems.length > 0 ? "start" : parsedStep);
       } else {
-        setSelected([]);
-        setDetails(createEmptyDetails());
-        setFocusedArea(null);
+        setItems([]);
         setLastStartedDate(null);
+        setDayKey(today);
         setStep("select");
       }
     } catch (error) {
       console.error("Kunne ikke læse falcus state", error);
+      setDayKey(today);
     } finally {
       setHasHydrated(true);
     }
@@ -252,32 +318,31 @@ export default function Home() {
 
   useEffect(() => {
     if (!hasHydrated) return;
-
-    const progressState: ProgressState = { streak };
-    localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progressState));
+    localStorage.setItem(
+      PROGRESS_STORAGE_KEY,
+      JSON.stringify({ streak } satisfies ProgressState)
+    );
   }, [hasHydrated, streak]);
 
   useEffect(() => {
     if (!hasHydrated) return;
 
-    const dayState: DayState = {
-      selected,
-      details,
-      focusedArea,
+    const stateToPersist: DayState = {
+      items,
       step,
       lastStartedDate,
+      dayKey: dayKey ?? getToday(),
       taskSuggestionIndex,
       microSuggestionIndex,
     };
 
-    localStorage.setItem(DAY_STORAGE_KEY, JSON.stringify(dayState));
+    localStorage.setItem(DAY_STORAGE_KEY, JSON.stringify(stateToPersist));
   }, [
     hasHydrated,
-    selected,
-    details,
-    focusedArea,
+    items,
     step,
     lastStartedDate,
+    dayKey,
     taskSuggestionIndex,
     microSuggestionIndex,
   ]);
@@ -285,41 +350,148 @@ export default function Home() {
   useEffect(() => {
     if (!hasHydrated) return;
 
-    function resetForNewDay() {
+    function syncDay() {
       const today = getToday();
-
-      if (lastStartedDate && lastStartedDate !== today) {
-        setSelected([]);
-        setDetails(createEmptyDetails());
-        setFocusedArea(null);
-        setStep("select");
-        setLastStartedDate(null);
-      }
+      setDayKey((prev) => {
+        if (prev === today) return prev;
+        clearCurrentDayState();
+        return today;
+      });
     }
 
     function handleVisibilityChange() {
       if (document.visibilityState === "visible") {
-        resetForNewDay();
+        syncDay();
       }
     }
 
-    resetForNewDay();
+    syncDay();
 
-    window.addEventListener("focus", resetForNewDay);
+    window.addEventListener("focus", syncDay);
+    window.addEventListener("pageshow", syncDay);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
+    const interval = window.setInterval(syncDay, 30 * 1000);
+
     return () => {
-      window.removeEventListener("focus", resetForNewDay);
+      window.removeEventListener("focus", syncDay);
+      window.removeEventListener("pageshow", syncDay);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.clearInterval(interval);
     };
-  }, [hasHydrated, lastStartedDate]);
+  }, [hasHydrated]);
+
+  const currentToday = getToday();
+  useEffect(() => {
+    if (!hasHydrated) return;
+    if (dayKey && dayKey !== currentToday) {
+      clearCurrentDayState();
+    }
+  }, [hasHydrated, dayKey, currentToday]);
 
   function resetDay() {
-    setSelected([]);
-    setDetails(createEmptyDetails());
-    setFocusedArea(null);
+    clearCurrentDayState();
+  }
+
+  const completedItems = useMemo(() => items.filter((item) => item.done), [items]);
+  const activeItems = useMemo(() => items.filter((item) => !item.done), [items]);
+  const currentItem = useMemo(() => items.find((item) => !item.done) ?? null, [items]);
+  const upcomingItems = useMemo(() => items.filter((item) => !item.done), [items]);
+
+  const hasStartedToday = lastStartedDate === currentToday;
+  const completedCount = completedItems.length;
+  const totalCount = items.length;
+  const activeCount = activeItems.length;
+  const everythingDone = totalCount > 0 && currentItem === null;
+  const dotProgress = progressDots(completedCount, totalCount);
+
+  const activeItemsAreValid = activeItems.every(
+    (item) => item.task.trim() !== "" && item.micro.trim() !== ""
+  );
+
+  function handleChooseOneMore() {
     setStep("select");
-    setLastStartedDate(null);
+  }
+
+  function handleAddArea(area: Area) {
+    if (activeCount >= 3) return;
+
+    const newItem: ActionItem = {
+      id: makeId(),
+      area,
+      task: "",
+      micro: "",
+      done: false,
+    };
+
+    setItems((prev) => [...prev, newItem]);
+  }
+
+  function handleRemoveOneFromArea(area: Area) {
+    const latestActiveInArea = [...activeItems]
+      .reverse()
+      .find((item) => item.area === area);
+
+    if (!latestActiveInArea) return;
+
+    removeItem(latestActiveInArea.id);
+  }
+
+  function removeItem(id: string) {
+    setItems((prev) => prev.filter((item) => item.id !== id));
+  }
+
+  function updateItem(id: string, patch: Partial<ActionItem>) {
+    setItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, ...patch } : item))
+    );
+  }
+
+  function applyTaskSuggestion(id: string, area: Area) {
+    const options = taskSuggestions[area];
+    const currentIndex = taskSuggestionIndex[area] ?? 0;
+    const suggestion = options[currentIndex];
+
+    updateItem(id, { task: suggestion });
+
+    setTaskSuggestionIndex((prev) => ({
+      ...prev,
+      [area]: (currentIndex + 1) % options.length,
+    }));
+  }
+
+  function applyMicroSuggestion(id: string, area: Area) {
+    const options = microSuggestions[area];
+    const currentIndex = microSuggestionIndex[area] ?? 0;
+    const suggestion = options[currentIndex];
+
+    updateItem(id, { micro: suggestion, done: false });
+
+    setMicroSuggestionIndex((prev) => ({
+      ...prev,
+      [area]: (currentIndex + 1) % options.length,
+    }));
+  }
+
+  function moveActiveItem(id: string, direction: "up" | "down") {
+    setItems((prev) => {
+      const active = prev.filter((item) => !item.done);
+      const completed = prev.filter((item) => item.done);
+
+      const index = active.findIndex((item) => item.id === id);
+      if (index === -1) return prev;
+
+      const targetIndex = direction === "up" ? index - 1 : index + 1;
+      if (targetIndex < 0 || targetIndex >= active.length) return prev;
+
+      const nextActive = [...active];
+      [nextActive[index], nextActive[targetIndex]] = [
+        nextActive[targetIndex],
+        nextActive[index],
+      ];
+
+      return [...nextActive, ...completed];
+    });
   }
 
   function handleStarted() {
@@ -333,103 +505,24 @@ export default function Home() {
     setStep("start");
   }
 
-  function handleSelectFirst(area: Area) {
-    setSelected([area]);
-    setFocusedArea(area);
-    setStep("defineFirst");
-  }
-
-  function handleEditText() {
-    if (selected.length > 1) {
-      setStep("defineRest");
-    } else {
-      setStep("defineFirst");
-    }
-  }
-
-  function handleSwitchFocus() {
-    setStep("focus");
-  }
-
-  function updateDetail(area: Area, field: keyof AreaDetails, value: string) {
-    setDetails((prev) => ({
-      ...prev,
-      [area]: {
-        ...prev[area],
-        [field]: value,
-      },
-    }));
-  }
-
-  function toggleExtraArea(area: Area) {
-    if (selected.includes(area)) {
-      if (selected[0] === area) return;
-      setSelected((prev) => prev.filter((a) => a !== area));
-      return;
-    }
-
-    if (selected.length < 3) {
-      setSelected((prev) => [...prev, area]);
-    }
-  }
-
-  function applyTaskSuggestion(area: Area) {
-    const options = taskSuggestions[area];
-    const currentIndex = taskSuggestionIndex[area] ?? 0;
-    const suggestion = options[currentIndex];
-
-    setDetails((prev) => ({
-      ...prev,
-      [area]: {
-        ...prev[area],
-        task: suggestion,
-      },
-    }));
-
-    setTaskSuggestionIndex((prev) => ({
-      ...prev,
-      [area]: (currentIndex + 1) % options.length,
-    }));
-  }
-
-  function applyMicroSuggestion(area: Area) {
-    const options = microSuggestions[area];
-    const currentIndex = microSuggestionIndex[area] ?? 0;
-    const suggestion = options[currentIndex];
-
-    setDetails((prev) => ({
-      ...prev,
-      [area]: {
-        ...prev[area],
-        micro: suggestion,
-        done: false,
-      },
-    }));
-
-    setMicroSuggestionIndex((prev) => ({
-      ...prev,
-      [area]: (currentIndex + 1) % options.length,
-    }));
-  }
-
-  function toggleDone(area: Area) {
-    setDetails((prev) => ({
-      ...prev,
-      [area]: {
-        ...prev[area],
-        done: !prev[area].done,
-      },
-    }));
+  function toggleDone(id: string) {
+    setItems((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, done: !item.done } : item
+      )
+    );
   }
 
   async function saveWidgetData(payload: {
     title: string;
     area: string;
+    task: string;
     micro: string;
     streak: number;
     done: boolean;
-    state: "open" | "done";
+    state: "idle" | "open" | "done";
     updatedAt: string;
+    progress: string;
   }) {
     try {
       await fetch("/api/widget/save", {
@@ -444,561 +537,532 @@ export default function Home() {
     }
   }
 
-  const firstArea = selected[0] ?? null;
-  const extraAreas = selected.slice(1);
-  const hasStartedToday = lastStartedDate === getToday();
-
-  const nextOpenArea = useMemo(() => {
-    if (selected.length === 0) return null;
-
-    const openAreas = selected.filter((area) => !details[area]?.done);
-    if (openAreas.length === 0) return null;
-
-    if (focusedArea && !details[focusedArea]?.done) return focusedArea;
-
-    return openAreas[0];
-  }, [selected, details, focusedArea]);
-
-  const cardArea = nextOpenArea ?? focusedArea;
-
-  const otherSelected = useMemo(() => {
-    if (cardArea === null) return selected;
-    return selected.filter((area) => area !== cardArea);
-  }, [selected, cardArea]);
-
-  const sortedOtherSelected = useMemo(() => {
-    return [...otherSelected].sort((a, b) => {
-      const aDone = details[a]?.done ? 1 : 0;
-      const bDone = details[b]?.done ? 1 : 0;
-      return aDone - bDone;
-    });
-  }, [otherSelected, details]);
-
-  const shownOtherSelected = sortedOtherSelected.slice(0, 2);
-  const hiddenOtherCount = Math.max(
-    sortedOtherSelected.length - shownOtherSelected.length,
-    0
-  );
-
   useEffect(() => {
-    if (!hasHydrated || !hasStartedToday) return;
+    if (!hasHydrated) return;
 
-    if (!nextOpenArea) {
+    const updatedAt = new Date().toISOString();
+
+    if (!hasStartedToday || items.length === 0) {
       saveWidgetData({
-        title: "I dag",
+        title: "Falcus",
         area: "",
-        micro: "Alt det valgte er klaret",
+        task: "",
+        micro: "Åbn Falcus nu",
         streak,
-        done: true,
-        state: "done",
-        updatedAt: new Date().toISOString(),
+        done: false,
+        state: "idle",
+        updatedAt,
+        progress: "0/0",
       });
       return;
     }
 
-    saveWidgetData({
-      title: "Næste mikro",
-      area: areaLabels[nextOpenArea],
-      micro: details[nextOpenArea]?.micro || "",
-      streak,
-      done: false,
-      state: "open",
-      updatedAt: new Date().toISOString(),
-    });
-  }, [hasHydrated, hasStartedToday, nextOpenArea, details, streak]);
+    if (everythingDone) {
+      saveWidgetData({
+        title: "I dag",
+        area: "",
+        task: "",
+        micro: "Færdig for i dag - Én mere?",
+        streak,
+        done: true,
+        state: "done",
+        updatedAt,
+        progress: `${completedCount}/${totalCount}`,
+      });
+      return;
+    }
+
+    if (currentItem) {
+      saveWidgetData({
+        title: "Næste mikro",
+        area: areaLabels[currentItem.area],
+        task: currentItem.task || "",
+        micro: currentItem.micro || "",
+        streak,
+        done: false,
+        state: "open",
+        updatedAt,
+        progress: `${completedCount}/${totalCount}`,
+      });
+    }
+  }, [
+    hasHydrated,
+    hasStartedToday,
+    items,
+    streak,
+    currentItem,
+    everythingDone,
+    completedCount,
+    totalCount,
+  ]);
+
+  function activeCountForArea(area: Area) {
+    return activeItems.filter((item) => item.area === area).length;
+  }
 
   if (!hasHydrated) {
     return (
-      <main className="min-h-screen bg-teal-950 p-6 text-white">
-        <div className="mx-auto max-w-md">
+      <AppShell>
+        <div className={shellClass}>
           <p className="text-sm text-white/60">Lige et øjeblik…</p>
         </div>
-      </main>
+      </AppShell>
     );
   }
 
-  if (step === "defineFirst" && firstArea) {
-    const firstTask = details[firstArea]?.task ?? "";
-    const firstMicro = details[firstArea]?.micro ?? "";
-
+  if (step === "define") {
     return (
-      <main className="min-h-screen bg-teal-950 p-6 text-white">
-        <div className="mx-auto max-w-md">
-          <TopStatus text="1 valgt" streak={streak} />
-          <h1 className="mb-2 text-3xl font-bold">Falcus</h1>
-          <p className="mb-7 text-sm text-white/70">
-            Du valgte én. Gør den lige konkret.
-          </p>
+      <AppShell>
+        <TopStatus text={`${activeCount} aktive`} streak={streak} />
+        <SectionTitle
+          eyebrow="Gør dem konkrete"
+          title="Hvad er den lille handling?"
+          subtitle="For at gå videre skal alle aktive have både opgave og mikrohandling."
+        />
 
-          <div className="mb-5 rounded-3xl border border-amber-200/80 bg-amber-300 p-5 text-black shadow-sm">
-            <p className="mb-1 text-sm uppercase tracking-wide opacity-70">
-              Første valg
-            </p>
-            <p className="text-lg font-semibold">{areaLabels[firstArea]}</p>
-          </div>
+        <FalconHero state="fokuserer" />
 
-          <div className="rounded-3xl border border-white/15 bg-white/10 p-5">
-            <p className="mb-3 font-semibold">{areaLabels[firstArea]}</p>
-
-            <input
-              autoFocus
-              placeholder="Hvad er opgaven?"
-              value={firstTask}
-              onChange={(e) => updateDetail(firstArea, "task", e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  document.getElementById(`micro-${firstArea}`)?.focus();
-                }
-              }}
-              className="mb-3 w-full rounded-xl bg-white/10 p-3 text-white outline-none placeholder:text-white/40"
-            />
-
-            <div className="mb-4 flex flex-wrap gap-2">
-              <ChipButton onClick={() => applyTaskSuggestion(firstArea)}>
-                Forslag til opgave
-              </ChipButton>
-            </div>
-
-            <input
-              id={`micro-${firstArea}`}
-              placeholder="Det mindste du kan gøre…"
-              value={firstMicro}
-              onChange={(e) => updateDetail(firstArea, "micro", e.target.value)}
-              className="mb-3 w-full rounded-xl bg-white/10 p-3 text-white outline-none placeholder:text-white/40"
-            />
-
-            <div className="flex flex-wrap gap-2">
-              <ChipButton onClick={() => applyMicroSuggestion(firstArea)}>
-                Forslag til mikro
-              </ChipButton>
-            </div>
-          </div>
-
-          <p className="mt-4 text-sm text-white/55">Det behøver ikke være stort.</p>
-
-          <button
-            onClick={() => setStep("expand")}
-            className="mt-7 w-full rounded-full bg-orange-400 px-5 py-4 text-base font-semibold text-black"
-          >
-            Videre
-          </button>
-
-          <button
-            onClick={resetDay}
-            className="mt-4 w-full rounded-full border border-white/15 px-5 py-4 text-base font-semibold text-white"
-          >
-            Start forfra
-          </button>
-        </div>
-      </main>
-    );
-  }
-
-  if (step === "expand" && firstArea) {
-    return (
-      <main className="min-h-screen bg-teal-950 p-6 text-white">
-        <div className="mx-auto max-w-md">
-          <TopStatus text={`${selected.length} valgt`} streak={streak} />
-          <h1 className="mb-2 text-3xl font-bold">Falcus</h1>
-          <p className="mb-7 text-sm text-white/70">
-            Du kan tage 2 mere med, hvis det giver mening.
-          </p>
-
-          <div className="mb-5 rounded-3xl border border-amber-200/80 bg-amber-300 p-5 text-black shadow-sm">
-            <p className="mb-1 text-sm uppercase tracking-wide opacity-70">
-              Du har allerede valgt
-            </p>
-            <p className="text-lg font-semibold">{areaLabels[firstArea]}</p>
-            <p className="mt-2 text-sm opacity-80">
-              Opgave: {details[firstArea]?.task || "—"}
-            </p>
-            <p className="text-sm opacity-80">
-              Mikro: {details[firstArea]?.micro || "—"}
-            </p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            {areas.map((area) => {
-              const isSelected = selected.includes(area);
-              const isLocked = firstArea === area;
-              const isDisabled = !isSelected && selected.length >= 3;
-
-              return (
-                <button
-                  key={area}
-                  onClick={() => toggleExtraArea(area)}
-                  disabled={isLocked || isDisabled}
-                  className={`rounded-3xl border p-4 text-left font-semibold transition ${
-                    isSelected
-                      ? "border-amber-200 bg-amber-300 text-black"
-                      : "border-white/15 bg-white/10 text-white"
-                  } ${isLocked || isDisabled ? "opacity-50" : "opacity-100"}`}
-                >
-                  {areaLabels[area]}
-                  {isLocked && (
-                    <p className="mt-1 text-xs opacity-70">Valgt først</p>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-
-          <p className="mt-4 text-sm text-white/65">{selected.length} / 3 valgt</p>
-
-          <button
-            onClick={() => {
-              if (extraAreas.length > 0) {
-                setStep("defineRest");
-              } else {
-                setFocusedArea(firstArea);
-                setStep("focus");
-              }
-            }}
-            className="mt-7 w-full rounded-full bg-orange-400 px-5 py-4 text-base font-semibold text-black"
-          >
-            Videre
-          </button>
-
-          <button
-            onClick={() => setStep("defineFirst")}
-            className="mt-4 w-full rounded-full border border-white/15 px-5 py-4 text-base font-semibold text-white"
-          >
-            Tilbage
-          </button>
-        </div>
-      </main>
-    );
-  }
-
-  if (step === "defineRest") {
-    return (
-      <main className="min-h-screen bg-teal-950 p-6 text-white">
-        <div className="mx-auto max-w-md">
-          <TopStatus text={`${selected.length} valgt`} streak={streak} />
-          <h1 className="mb-2 text-3xl font-bold">Falcus</h1>
-          <p className="mb-7 text-sm text-white/70">
-            Gør de andre valg konkrete.
-          </p>
-
-          <div className="space-y-4">
-            {extraAreas.map((area, index) => (
-              <div
-                key={area}
-                className="rounded-3xl border border-white/15 bg-white/10 p-5"
-              >
-                <p className="mb-3 font-semibold">{areaLabels[area]}</p>
-
-                <input
-                  autoFocus={index === 0}
-                  placeholder="Hvad er opgaven?"
-                  value={details[area]?.task || ""}
-                  onChange={(e) => updateDetail(area, "task", e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      document.getElementById(`micro-${area}`)?.focus();
-                    }
-                  }}
-                  className="mb-3 w-full rounded-xl bg-white/10 p-3 text-white outline-none placeholder:text-white/40"
-                />
-
-                <div className="mb-4 flex flex-wrap gap-2">
-                  <ChipButton onClick={() => applyTaskSuggestion(area)}>
-                    Forslag til opgave
-                  </ChipButton>
+        <div className="space-y-4">
+          {activeItems.map((item, index) => (
+            <div key={item.id} className={`${cardClass} p-5`}>
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <p className={labelClass}>{areaLabels[item.area]}</p>
+                  <p className="mt-1 text-lg font-semibold text-white/92">
+                    Ny handling
+                  </p>
                 </div>
 
-                <input
-                  id={`micro-${area}`}
-                  placeholder="Det mindste du kan gøre…"
-                  value={details[area]?.micro || ""}
-                  onChange={(e) => updateDetail(area, "micro", e.target.value)}
-                  className="mb-3 w-full rounded-xl bg-white/10 p-3 text-white outline-none placeholder:text-white/40"
-                />
+                <button
+                  type="button"
+                  onClick={() => removeItem(item.id)}
+                  className="rounded-full border border-white/12 bg-white/5 px-3 py-1.5 text-sm text-white/70"
+                >
+                  Fjern
+                </button>
+              </div>
 
-                <div className="flex flex-wrap gap-2">
-                  <ChipButton onClick={() => applyMicroSuggestion(area)}>
-                    Forslag til mikro
-                  </ChipButton>
+              <input
+                autoFocus={index === 0}
+                placeholder="Hvad er opgaven?"
+                value={item.task}
+                onChange={(e) =>
+                  updateItem(item.id, { task: e.target.value })
+                }
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    document.getElementById(`micro-${item.id}`)?.focus();
+                  }
+                }}
+                className={inputClass}
+              />
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <ChipButton onClick={() => applyTaskSuggestion(item.id, item.area)}>
+                  Forslag til opgave
+                </ChipButton>
+              </div>
+
+              <input
+                id={`micro-${item.id}`}
+                placeholder="Det mindste du kan gøre…"
+                value={item.micro}
+                onChange={(e) =>
+                  updateItem(item.id, { micro: e.target.value })
+                }
+                className={`${inputClass} mt-4`}
+              />
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <ChipButton onClick={() => applyMicroSuggestion(item.id, item.area)}>
+                  Forslag til mikro
+                </ChipButton>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <button
+          onClick={() => setStep("prioritize")}
+          disabled={!activeItemsAreValid}
+          className={`${primaryButtonClass} mt-7`}
+        >
+          Prioritér rækkefølge
+        </button>
+
+        <button
+          onClick={() => setStep("select")}
+          className={`${secondaryButtonClass} mt-4`}
+        >
+          Tilbage
+        </button>
+      </AppShell>
+    );
+  }
+
+  if (step === "prioritize") {
+    return (
+      <AppShell>
+        <TopStatus text="Prioritér" streak={streak} />
+        <SectionTitle
+          eyebrow="Rækkefølge"
+          title="Hvad er vigtigst først?"
+          subtitle="Kun udfyldte handlinger er med i denne omgang."
+        />
+
+        <FalconHero state="fokuserer" />
+
+        <div className="space-y-3">
+          {activeItems.map((item, index) => (
+            <div key={item.id} className={`${cardClass} p-5`}>
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div>
+                  <p className={labelClass}>#{index + 1}</p>
+                  <p className="mt-1 text-lg font-semibold text-white/92">
+                    {areaLabels[item.area]}
+                  </p>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => moveActiveItem(item.id, "up")}
+                    disabled={index === 0}
+                    className="rounded-full border border-white/12 bg-white/5 px-3 py-1 text-sm disabled:opacity-30"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveActiveItem(item.id, "down")}
+                    disabled={index === activeItems.length - 1}
+                    className="rounded-full border border-white/12 bg-white/5 px-3 py-1 text-sm disabled:opacity-30"
+                  >
+                    ↓
+                  </button>
                 </div>
               </div>
-            ))}
-          </div>
 
-          <p className="mt-4 text-sm text-white/55">
-            Bare nok til at du kan komme i gang.
-          </p>
+              <p className="text-sm text-white/65">
+                Opgave: {item.task || "—"}
+              </p>
+              <p className="mt-1 text-sm text-white/85">
+                Mikro: {item.micro || "—"}
+              </p>
+            </div>
+          ))}
 
-          <button
-            onClick={() => {
-              setFocusedArea(firstArea);
-              setStep("focus");
-            }}
-            className="mt-7 w-full rounded-full bg-orange-400 px-5 py-4 text-base font-semibold text-black"
-          >
-            Videre
-          </button>
-
-          <button
-            onClick={() => setStep("expand")}
-            className="mt-4 w-full rounded-full border border-white/15 px-5 py-4 text-base font-semibold text-white"
-          >
-            Tilbage
-          </button>
+          {completedItems.length > 0 && (
+            <div className="pt-3">
+              <p className={`${labelClass} mb-3`}>Allerede klaret</p>
+              <div className="space-y-3">
+                {completedItems.map((item) => (
+                  <div key={item.id} className={`${mutedCardClass} p-4 opacity-60`}>
+                    <p className="text-sm text-white/55">{areaLabels[item.area]}</p>
+                    <p className="mt-1 text-sm text-white/80">✓ {item.micro || "—"}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-      </main>
+
+        <button
+          onClick={() => setStep("start")}
+          className={`${primaryButtonClass} mt-7`}
+        >
+          Klar
+        </button>
+
+        <button
+          onClick={() => setStep("define")}
+          className={`${secondaryButtonClass} mt-4`}
+        >
+          Tilbage
+        </button>
+      </AppShell>
     );
   }
 
-  if (step === "focus") {
+  if (step === "start" && items.length > 0) {
+    const roundText = everythingDone
+      ? `${totalCount} / ${totalCount}`
+      : `${completedCount + 1} / ${totalCount}`;
+
+    const heroState = everythingDone ? "tilfreds" : "dykker";
+
     return (
-      <main className="min-h-screen bg-teal-950 p-6 text-white">
-        <div className="mx-auto max-w-md">
-          <TopStatus
-            text={`${selected.length} valgt${focusedArea ? ", vælger fokus" : ""}`}
-            streak={streak}
-          />
-          <h1 className="mb-2 text-3xl font-bold">Falcus</h1>
-          <p className="mb-7 text-sm text-white/70">Hvad starter du med?</p>
+      <AppShell>
+        <TopStatus text={`${activeCount} aktive`} streak={streak} />
+        <SectionTitle
+          eyebrow="I gang"
+          title="Fokus nu"
+          subtitle={
+            !hasStartedToday
+              ? "Du har valgt. Start når du er klar."
+              : everythingDone
+              ? "Alt aktivt er klaret. Du kan stoppe eller tage én mere."
+              : "Appen holder fokus på næste ufærdige mikrohandling."
+          }
+        />
 
-          <div className="space-y-3">
-            {selected.map((area) => {
-              const isFocused = focusedArea === area;
-              const isDone = details[area]?.done;
+        <FalconHero state={heroState} />
 
-              return (
-                <button
-                  key={area}
-                  onClick={() => setFocusedArea(area)}
-                  className={`w-full rounded-3xl border p-5 text-left transition ${
-                    isFocused
-                      ? "border-amber-200 bg-amber-300 text-black"
-                      : "border-white/15 bg-white/10 text-white"
-                  } ${isDone ? "opacity-60" : ""}`}
-                >
-                  <p className="font-semibold">
-                    {areaLabels[area]} {isDone ? "✓" : ""}
-                  </p>
-                  <p className="mt-1 text-sm opacity-80">
-                    Opgave: {details[area]?.task || "—"}
-                  </p>
-                  <p
-                    className={`text-sm opacity-80 ${
-                      isDone ? "line-through" : ""
-                    }`}
-                  >
-                    Mikro: {details[area]?.micro || "—"}
-                  </p>
-                </button>
-              );
-            })}
+        <div className={`${mutedCardClass} mb-5 px-4 py-3`}>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className={labelClass}>Fremdrift i dag</p>
+              <p className="mt-1 text-lg font-semibold text-white/90">
+                {dotProgress || "—"}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className={labelClass}>Runde</p>
+              <p className="mt-1 text-lg font-semibold text-white/90">
+                {roundText}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className={`${cardClass} overflow-hidden`}>
+          <div className="border-b border-white/10 bg-white/5 px-6 py-4">
+            <p className={labelClass}>{everythingDone ? "I dag" : "Næste mikro"}</p>
           </div>
 
-          {focusedArea && (
-            <button
-              onClick={() => setStep("start")}
-              className="mt-7 w-full rounded-full bg-orange-400 px-5 py-4 text-base font-semibold text-black"
-            >
-              Start med den her
-            </button>
-          )}
-
-          <button
-            onClick={() => {
-              if (extraAreas.length > 0) {
-                setStep("defineRest");
-              } else {
-                setStep("expand");
-              }
-            }}
-            className="mt-4 w-full rounded-full border border-white/15 px-5 py-4 text-base font-semibold text-white"
-          >
-            Tilbage
-          </button>
-        </div>
-      </main>
-    );
-  }
-
-  if (step === "start" && focusedArea) {
-    const focusDone = cardArea ? details[cardArea]?.done : false;
-    const everythingDone = selected.length > 0 && !nextOpenArea;
-
-    return (
-      <main className="min-h-screen bg-teal-950 p-6 text-white">
-        <div className="mx-auto max-w-md">
-          <TopStatus
-            text={
-              hasStartedToday
-                ? `${selected.length} valgt, 1 i fokus`
-                : `${selected.length} valgt`
-            }
-            streak={streak}
-          />
-          <h1 className="mb-2 text-3xl font-bold">Falcus</h1>
-
-          {hasStartedToday ? (
-            <p className="mb-7 text-sm text-white/70">
-              Det her er dit fokus i dag.
-            </p>
-          ) : (
-            <p className="mb-7 text-sm text-white/70">
-              Du behøver kun starte her.
-            </p>
-          )}
-
-          <div
-            className={`rounded-3xl border border-white/15 bg-white/10 p-5 ${
-              everythingDone ? "opacity-75" : ""
-            }`}
-          >
-            <p className="mb-2 text-sm uppercase tracking-wide text-white/55">
-              {everythingDone ? "Dagen i dag" : "Næste mikro"}
-            </p>
-
-            {!everythingDone && cardArea ? (
+          <div className="p-6">
+            {!everythingDone && currentItem ? (
               <>
-                <p className="mb-2 text-sm font-semibold text-white/75">
-                  {areaLabels[cardArea]}
+                <p className="mb-2 text-sm font-semibold text-white/72">
+                  {areaLabels[currentItem.area]}
                 </p>
-
-                <p className="text-2xl font-semibold leading-snug text-white">
-                  {details[cardArea]?.micro || "—"}
+                <p className="text-sm text-white/50">
+                  {currentItem.task || "—"}
                 </p>
-
-                <p className="mt-4 text-sm text-white/55">
-                  Opgave: {details[cardArea]?.task || "—"}
+                <p className="mt-3 text-3xl font-semibold leading-tight text-white">
+                  {currentItem.micro || "—"}
                 </p>
               </>
             ) : (
               <>
-                <p className="text-2xl font-semibold leading-snug text-white">
-                  Alt det valgte er klaret.
+                <p className="text-3xl font-semibold leading-tight text-white">
+                  Færdig for i dag
                 </p>
-
-                <p className="mt-4 text-sm text-white/55">
-                  Du har lukket dagens små løkker.
-                </p>
+                <p className="mt-4 text-sm text-white/52">Én mere?</p>
               </>
             )}
           </div>
-
-          {shownOtherSelected.length > 0 && (
-            <div className="mt-4 rounded-3xl border border-white/10 bg-white/5 p-5">
-              <p className="mb-3 text-sm uppercase tracking-wide text-white/50">
-                Også valgt i dag
-              </p>
-
-              <div className="space-y-2 text-sm">
-                {shownOtherSelected.map((area) => {
-                  const isDone = details[area]?.done;
-
-                  return (
-                    <div
-                      key={area}
-                      className={`border-b border-white/10 pb-2 last:border-b-0 last:pb-0 ${
-                        isDone ? "opacity-55" : ""
-                      }`}
-                    >
-                      <span className="font-semibold text-white/90">
-                        {areaLabels[area]}
-                      </span>
-                      <span className="text-white/55"> → </span>
-                      <span
-                        className={
-                          isDone ? "line-through text-white/65" : "text-white/75"
-                        }
-                      >
-                        {details[area]?.micro || "—"}
-                      </span>
-                      {isDone ? <span className="ml-2 text-white/45">✓</span> : null}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {hiddenOtherCount > 0 && (
-                <p className="mt-3 text-xs text-white/45">
-                  + {hiddenOtherCount} mere valgt
-                </p>
-              )}
-            </div>
-          )}
-
-          <p className="mt-4 text-sm text-white/65">
-            {everythingDone
-              ? "Du er faktisk done i dag."
-              : focusDone
-              ? "Fokus er taget. Næste åbne mikro er vist ovenfor."
-              : "Begynd bare med mikrohandlingen."}
-          </p>
-
-          {!hasStartedToday && (
-            <button
-              onClick={handleStarted}
-              className="mt-7 w-full rounded-full bg-orange-400 px-5 py-4 text-base font-semibold text-black"
-            >
-              Jeg er i gang
-            </button>
-          )}
-
-          {hasStartedToday && cardArea && !everythingDone && (
-            <button
-              onClick={() => toggleDone(cardArea)}
-              className="mt-7 w-full rounded-full bg-orange-400 px-5 py-4 text-base font-semibold text-black"
-            >
-              {focusDone ? "Marker som ikke gjort" : "Marker som gjort"}
-            </button>
-          )}
-
-          <div className="mt-5 flex items-center justify-center gap-4 text-sm">
-            <button
-              onClick={handleEditText}
-              className="text-white/55 underline underline-offset-4 hover:text-white/75"
-            >
-              Redigér tekst
-            </button>
-            <span className="text-white/20">•</span>
-            <button
-              onClick={handleSwitchFocus}
-              className="text-white/55 underline underline-offset-4 hover:text-white/75"
-            >
-              Skift fokus
-            </button>
-          </div>
         </div>
-      </main>
+
+        {!hasStartedToday && (
+          <button
+            onClick={handleStarted}
+            className={`${primaryButtonClass} mt-7`}
+          >
+            Start
+          </button>
+        )}
+
+        {hasStartedToday && currentItem && (
+          <button
+            onClick={() => toggleDone(currentItem.id)}
+            className={`${primaryButtonClass} mt-7`}
+          >
+            Marker som gjort
+          </button>
+        )}
+
+        {hasStartedToday && everythingDone && (
+          <button
+            onClick={handleChooseOneMore}
+            className={`${primaryButtonClass} mt-7`}
+          >
+            Én mere?
+          </button>
+        )}
+
+        {completedItems.length > 0 && (
+          <div className="mt-8">
+            <p className={`${labelClass} mb-3`}>Klaret indtil nu</p>
+
+            <div className="space-y-2">
+              {completedItems.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex items-start gap-3 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3"
+                >
+                  <span className="mt-0.5 text-white/75">✓</span>
+                  <div className="min-w-0">
+                    <p className="text-sm text-white/45">{areaLabels[item.area]}</p>
+                    <p className="text-sm text-white/82">{item.micro || "—"}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {upcomingItems.length > 1 && !everythingDone && (
+          <div className="mt-8">
+            <p className={`${labelClass} mb-3`}>På vej</p>
+
+            <div className="space-y-3">
+              {upcomingItems
+                .filter((item) => item.id !== currentItem?.id)
+                .map((item, index) => (
+                  <div key={item.id} className={`${mutedCardClass} p-4`}>
+                    <p className="text-sm text-white/50">
+                      #{index + 2} · {areaLabels[item.area]}
+                    </p>
+                    <p className="mt-1 text-sm text-white/60">
+                      {item.task || "—"}
+                    </p>
+                    <p className="mt-1 text-lg font-semibold text-white/90">
+                      {item.micro || "—"}
+                    </p>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+
+        <div className="mt-6 flex items-center justify-center gap-4 text-sm">
+          <button
+            onClick={() => setStep("prioritize")}
+            className="text-white/55 underline underline-offset-4 hover:text-white/75"
+          >
+            Prioritér igen
+          </button>
+          <span className="text-white/20">•</span>
+          <button
+            onClick={() => setStep("define")}
+            className="text-white/55 underline underline-offset-4 hover:text-white/75"
+          >
+            Redigér tekst
+          </button>
+        </div>
+      </AppShell>
     );
   }
 
   return (
-    <main className="min-h-screen bg-teal-950 p-6 text-white">
-      <div className="mx-auto max-w-md">
-        <TopStatus text="Ny dag" streak={streak} />
-        <h1 className="mb-2 text-3xl font-bold">Falcus</h1>
-        <p className="mb-6 text-sm text-white/70">
-          Vælg 1 først. Resten kan komme bagefter.
-        </p>
+    <AppShell>
+      <TopStatus text="Ny dag" streak={streak} />
 
-        <h2 className="mb-4 text-lg font-semibold">
-          Hvad giver mest mening lige nu?
-        </h2>
+      <SectionTitle
+        eyebrow="Vælg handlinger"
+        title="Hvad giver mest mening lige nu?"
+        subtitle="Du kan vælge op til 3 aktive handlinger ad gangen. Samme område må gerne gå igen."
+      />
 
-        <div className="grid grid-cols-2 gap-3">
-          {areas.map((area) => (
-            <button
+      <FalconHero state="svaever" />
+
+      <div className="space-y-3">
+        {areas.map((area) => {
+          const areaCount = activeCountForArea(area);
+          const canAdd = activeCount < 3;
+          const canRemove = areaCount > 0;
+          const isSelected = areaCount > 0;
+
+          return (
+            <div
               key={area}
-              onClick={() => handleSelectFirst(area)}
-              className="rounded-3xl border border-white/15 bg-white/10 p-5 text-left font-semibold text-white transition hover:bg-white/15"
+              className={`rounded-[26px] border p-5 transition ${
+                isSelected
+                  ? "border-amber-300/70 bg-amber-400/20 text-white shadow-[inset_0_0_0_1px_rgba(255,209,102,0.15)]"
+                  : "border-white/12 bg-white/[0.07] text-white"
+              } ${!canAdd && !isSelected ? "opacity-40" : ""}`}
             >
-              {areaLabels[area]}
-            </button>
-          ))}
-        </div>
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-lg font-semibold">{areaLabels[area]}</p>
+                  {areaCount > 0 ? (
+                    <p className="mt-1 text-sm text-white/60">
+                      {areaCount} valgt i denne omgang
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-sm text-white/40">
+                      Ingen aktive endnu
+                    </p>
+                  )}
+                </div>
 
-        <p className="mt-4 text-sm text-white/70">Du behøver kun vælge ét.</p>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveOneFromArea(area)}
+                    disabled={!canRemove}
+                    className="h-11 w-11 rounded-full border border-white/10 bg-white/6 text-xl leading-none opacity-80 disabled:opacity-25"
+                    aria-label={`Fjern én fra ${areaLabels[area]}`}
+                  >
+                    −
+                  </button>
+
+                  <div className="min-w-[2rem] text-center text-sm font-semibold text-white/75">
+                    {areaCount}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleAddArea(area)}
+                    disabled={!canAdd}
+                    className="h-11 w-11 rounded-full border border-white/10 bg-white/6 text-xl leading-none opacity-80 disabled:opacity-25"
+                    aria-label={`Tilføj én til ${areaLabels[area]}`}
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
-    </main>
+
+      <div className={`${mutedCardClass} mt-5 px-4 py-3`}>
+        <p className="text-sm text-white/70">
+          {activeCount} aktive • du kan vælge {Math.max(0, 3 - activeCount)} mere
+        </p>
+      </div>
+
+      {completedItems.length > 0 && (
+        <div className="mt-7">
+          <p className={`${labelClass} mb-3`}>Allerede klaret i dag</p>
+
+          <div className="space-y-2">
+            {completedItems.map((item) => (
+              <div
+                key={item.id}
+                className="flex items-start gap-3 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3"
+              >
+                <span className="mt-0.5 text-white/75">✓</span>
+                <div className="min-w-0">
+                  <p className="text-sm text-white/45">{areaLabels[item.area]}</p>
+                  <p className="text-sm text-white/82">{item.micro || "—"}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeItems.length > 0 && (
+        <button
+          onClick={() => setStep("define")}
+          className={`${primaryButtonClass} mt-8`}
+        >
+          Videre
+        </button>
+      )}
+
+      {items.length > 0 && (
+        <button
+          onClick={resetDay}
+          className={`${secondaryButtonClass} mt-4`}
+        >
+          Start forfra
+        </button>
+      )}
+    </AppShell>
   );
 }
