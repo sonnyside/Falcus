@@ -9,6 +9,11 @@ export async function POST(req: NextRequest) {
 
     await redis.set("widget-data", body);
 
+    if (typeof body?.testerId === "string" && body.testerId.trim()) {
+      await redis.sadd("falcus:testers", body.testerId.trim());
+    }
+
+
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("Widget save error:", error);
