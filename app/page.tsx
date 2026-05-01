@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { resolveTesterId, trackEvent } from "@/lib/tracking";
 
 type Area = {
   id: string;
@@ -139,18 +140,64 @@ export default function Page() {
 
   const [draftTaskTitle, setDraftTaskTitle] = useState("");
   const [draftAreaId, setDraftAreaId] = useState("");
+  const [testerId, setTesterId] = useState("default");
 
   useEffect(() => {
+    const resolvedTesterId = resolveTesterId();
+    setTesterId(resolvedTesterId);
     const loaded = loadState();
     const today = todayKey();
+    const fallbackUsed = !localStorage.getItem(STORAGE_KEY);
 
     if (loaded.lastActiveDate !== today) {
       loaded.completionsToday = 0;
     }
 
     setAppState(loaded);
-    setStep(loaded.onboardingDone ? (loaded.activeTasks.length ? "focus" : "start") : "onboarding");
+    const nextStep = loaded.onboardingDone ? (loaded.activeTasks.length ? "focus" : "start") : "onboarding";
+    setStep(nextStep);
     setHydrated(true);
+    void trackEvent({
+      testerId: resolvedTesterId,
+      eventName: "app_opened",
+      step: nextStep,
+      timestamp: new Date().toISOString(),
+    });
+    if (!loaded.onboardingDone) {
+      void trackEvent({
+        testerId: resolvedTesterId,
+        eventName: "explainer_opened",
+        step: "onboarding",
+        timestamp: new Date().toISOString(),
+      });
+      void trackEvent({
+        testerId: resolvedTesterId,
+        eventName: "onboarding_started",
+        step: "onboarding",
+        timestamp: new Date().toISOString(),
+      });
+    } else {
+      void trackEvent({
+        testerId: resolvedTesterId,
+        eventName: "explainer_skipped",
+        step: nextStep,
+        timestamp: new Date().toISOString(),
+      });
+      void trackEvent({
+        testerId: resolvedTesterId,
+        eventName: "user_returned_to_saved_step",
+        step: nextStep,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    if (fallbackUsed) {
+      void trackEvent({
+        testerId: resolvedTesterId,
+        eventName: "default_state_fallback",
+        step: nextStep,
+        timestamp: new Date().toISOString(),
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -186,6 +233,13 @@ export default function Page() {
 
       return { ...prev, selectedAreaIds: next };
     });
+    void trackEvent({
+      testerId,
+      eventName: "area_selected",
+      step: "onboarding",
+      timestamp: new Date().toISOString(),
+      metadata: { areaId },
+    });
   }
 
   function addCustomArea() {
@@ -209,16 +263,54 @@ export default function Page() {
   }
 
   function finishOnboarding() {
-    if (appState.selectedAreaIds.length === 0) return;
+    if (appState.selectedAreaIds.length === 0) {
+      void trackEvent({
+        testerId,
+        eventName: "invalid_empty_submit",
+        step: "onboarding",
+        timestamp: new Date().toISOString(),
+        metadata: { action: "finishOnboarding" },
+      });
+      return;
+    }
     updateState({ onboardingDone: true });
     setStep(appState.activeTasks.length ? "focus" : "start");
+    void trackEvent({
+      testerId,
+      eventName: "onboarding_completed",
+      step: "onboarding",
+      timestamp: new Date().toISOString(),
+    });
   }
 
   function beginTask(taskTitle: string, suggestedAreaId?: string) {
     const title = taskTitle.trim();
-    if (!title) return;
+    if (!title) {
+      void trackEvent({
+        testerId,
+        eventName: "invalid_empty_submit",
+        step: "start",
+        timestamp: new Date().toISOString(),
+        metadata: { action: "beginTask" },
+      });
+      return;
+    }
 
     const areaId = suggestedAreaId || detectAreaId(title, appState.selectedAreaIds);
+    void trackEvent({
+      testerId,
+      eventName: "task_written",
+      step: "start",
+      timestamp: new Date().toISOString(),
+      metadata: { areaId, suggested: Boolean(suggestedAreaId) },
+    });
+    void trackEvent({
+      testerId,
+      eventName: "task_confirmed",
+      step: "start",
+      timestamp: new Date().toISOString(),
+      metadata: { areaId },
+    });
     setDraftTaskTitle(title);
     setDraftAreaId(areaId);
     setMicroInput("");
@@ -227,9 +319,24 @@ export default function Page() {
 
   function addTaskWithMicro(micro: string) {
     const cleanMicro = micro.trim();
-    if (!cleanMicro || !draftTaskTitle || !draftAreaId) return;
+    if (!cleanMicro || !draftTaskTitle || !draftAreaId) {
+      void trackEvent({
+        testerId,
+        eventName: "invalid_empty_submit",
+        step: "micro",
+        timestamp: new Date().toISOString(),
+        metadata: { action: "addTaskWithMicro" },
+      });
+      return;
+    }
     if (appState.activeTasks.length >= 3) {
       setStep("focus");
+      void trackEvent({
+        testerId,
+        eventName: "add_more_clicked",
+        step: "focus",
+        timestamp: new Date().toISOString(),
+      });
       return;
     }
 
@@ -250,9 +357,36 @@ export default function Page() {
     setDraftAreaId("");
     setMicroInput("");
     setStep("focus");
+    void trackEvent({
+      testerId,
+      eventName: "micro_written",
+      step: "micro",
+      timestamp: new Date().toISOString(),
+      metadata: { areaId: draftAreaId },
+    });
+    void trackEvent({
+      testerId,
+      eventName: "draft_saved",
+      step: "focus",
+      timestamp: new Date().toISOString(),
+      metadata: { areaId: draftAreaId },
+    });
+    void trackEvent({
+      testerId,
+      eventName: "focus_created",
+      step: "focus",
+      timestamp: new Date().toISOString(),
+    });
   }
 
   function prioritizeTask(taskId: string) {
+  void trackEvent({
+    testerId,
+    eventName: "prioritize_clicked",
+    step: "focus",
+    timestamp: new Date().toISOString(),
+    metadata: { taskId },
+  });
   setAppState((prev): StoredState => {
     const tasks: Task[] = prev.activeTasks.map((task): Task => ({
       ...task,
@@ -266,6 +400,13 @@ export default function Page() {
   });
 
   setStep("focus");
+  void trackEvent({
+    testerId,
+    eventName: "priority_changed",
+    step: "focus",
+    timestamp: new Date().toISOString(),
+    metadata: { taskId },
+  });
 }
 
   function completeFocusTask() {
@@ -299,6 +440,13 @@ export default function Page() {
   }));
 
   setStep("done");
+  void trackEvent({
+    testerId,
+    eventName: "focus_completed",
+    step: "done",
+    timestamp: new Date().toISOString(),
+    metadata: { taskId: focusTask.id },
+  });
 }
 
   if (!hydrated) {
@@ -460,7 +608,18 @@ export default function Page() {
 
         {step === "micro" && (
           <section style={styles.card}>
-            <button onClick={() => setStep("start")} style={styles.backButton}>
+            <button
+              onClick={() => {
+                void trackEvent({
+                  testerId,
+                  eventName: "back_clicked",
+                  step: "micro",
+                  timestamp: new Date().toISOString(),
+                });
+                setStep("start");
+              }}
+              style={styles.backButton}
+            >
               ← Tilbage
             </button>
 
@@ -506,7 +665,18 @@ export default function Page() {
           <section style={styles.focusCard}>
             <div style={styles.rowBetween}>
               <div style={styles.eyebrowFocus}>Fokus nu</div>
-              <button onClick={() => setStep("start")} style={styles.ghostIcon}>
+              <button
+                onClick={() => {
+                  void trackEvent({
+                    testerId,
+                    eventName: "add_more_clicked",
+                    step: "focus",
+                    timestamp: new Date().toISOString(),
+                  });
+                  setStep("start");
+                }}
+                style={styles.ghostIcon}
+              >
                 ＋
               </button>
             </div>
@@ -551,7 +721,18 @@ export default function Page() {
               <>
                 <h1 style={styles.title}>Intet i fokus endnu</h1>
                 <p style={styles.textMuted}>Vælg noget at gå i gang med.</p>
-                <button onClick={() => setStep("start")} style={styles.primaryButton}>
+                <button
+                  onClick={() => {
+                    void trackEvent({
+                      testerId,
+                      eventName: "new_plan_clicked",
+                      step: "focus",
+                      timestamp: new Date().toISOString(),
+                    });
+                    setStep("start");
+                  }}
+                  style={styles.primaryButton}
+                >
                   Vælg start
                 </button>
               </>
@@ -576,10 +757,24 @@ export default function Page() {
             </div>
 
             <div style={styles.inlineRow}>
-              <button onClick={() => setStep(appState.activeTasks.length ? "focus" : "start")} style={styles.secondaryButton}>
+              <button
+                onClick={() => setStep(appState.activeTasks.length ? "focus" : "start")}
+                style={styles.secondaryButton}
+              >
                 Færdig for nu
               </button>
-              <button onClick={() => setStep("start")} style={styles.primaryButton}>
+              <button
+                onClick={() => {
+                  void trackEvent({
+                    testerId,
+                    eventName: "new_plan_clicked",
+                    step: "done",
+                    timestamp: new Date().toISOString(),
+                  });
+                  setStep("start");
+                }}
+                style={styles.primaryButton}
+              >
                 Tag én mere
               </button>
             </div>
